@@ -1,4 +1,5 @@
 import positionVert from './shaders/geojsonRenderer/position.vert.wgsl?raw'
+import lineVert from './shaders/geojsonRenderer/line.vert.wgsl?raw'
 import layerFrag from './shaders/geojsonRenderer/layer.frag.wgsl?raw'
 import lineFrag from './shaders/geojsonRenderer/line.frag.wgsl?raw'
 import axios from "axios";
@@ -57,7 +58,7 @@ async function initModelData() {
     const geojson = (await axios.get("/geojson/China.json")).data;
     // var geojson = turf.simplify(geojsonRaw, { tolerance: 100, highQuality: false });
     const center = turf.center(geojson).geometry.coordinates;
-    cameraState.position = [center[0], center[1], 70];
+    cameraState.position = [center[0], center[1], 40];
     cameraState.target = [center[0], center[1], 0];
     modelData.vertices = geojsonUtils.getVertices(geojson);
     modelData.lines = geojsonUtils.getLines(geojson);
@@ -127,63 +128,10 @@ async function initPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
     const pipeline = await device.createRenderPipelineAsync(descriptor)
 
-    const posBuffer = device.createBuffer({
-        label: 'storage for positions',
-        size: modelData.vertices.length * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-
-    const translationBuffer = device.createBuffer({
-        label: 'uniform for translation',
-        size: 8,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    })
-
-    const mvpBuffer = device.createBuffer({
-        label: 'uniform for mvpMatrix',
-        size: 64,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    })
-
-    const bindGroup = device.createBindGroup({
-        label: `bind group for uniform buffer`,
-        layout: pipeline.getBindGroupLayout(0),
-        entries: [
-            { binding: 0, resource: { buffer: posBuffer } },
-            { binding: 1, resource: { buffer: mvpBuffer } },
-            { binding: 2, resource: { buffer: translationBuffer } },
-        ],
-    });
-
-    return { pipeline, translationBuffer, posBuffer, mvpBuffer, bindGroup }
-}
-
-async function initLinePipeline(device: GPUDevice, format: GPUTextureFormat) {
-    const descriptor: GPURenderPipelineDescriptor = {
-        layout: 'auto',
-        vertex: {
-            module: device.createShaderModule({
-                code: positionVert
-            }),
-            entryPoint: 'main'
-        },
-        primitive: {
-            topology: 'line-list' // try point-list, line-list, line-strip, triangle-strip?
-        },
-        fragment: {
-            module: device.createShaderModule({
-                code: lineFrag
-            }),
-            entryPoint: 'main',
-            targets: [
-                {
-                    format: format
-                }
-            ]
-        }
-    }
-
-    const pipeline = await device.createRenderPipelineAsync(descriptor)
+    descriptor.primitive!.topology = 'line-strip'
+    descriptor.vertex!.module = device.createShaderModule({code: lineVert})
+    descriptor.fragment!.module = device.createShaderModule({code: lineFrag})
+    const linePipeline = await device.createRenderPipelineAsync(descriptor)
 
     const posBuffer = device.createBuffer({
         label: 'storage for positions',
@@ -213,14 +161,16 @@ async function initLinePipeline(device: GPUDevice, format: GPUTextureFormat) {
         ],
     });
 
-    return { pipeline, translationBuffer, posBuffer, mvpBuffer, bindGroup }
+    return { pipeline, linePipeline, translationBuffer, posBuffer, mvpBuffer, bindGroup }
 }
+
 
 // create & submit device commands
 function draw(device: GPUDevice,
     context: GPUCanvasContext,
     pipelineObj: {
         pipeline: GPURenderPipeline
+        linePipeline: GPURenderPipeline
         translationBuffer: GPUBuffer
         posBuffer: GPUBuffer
         mvpBuffer: GPUBuffer
@@ -250,21 +200,25 @@ function draw(device: GPUDevice,
     console.log('projection:', projectionMatrix)
     let testVec4 = vec4.fromValues(117.38987731933594, 40.56159210205078, 0, 1)
     const result = vec4.create()
-    vec4.transformMat4(result, testVec4, mvpMatrix);
+    vec4.transformMat4(result, testVec4, mvpMatrix)
     console.log(result)
     ///////////
 
     device.queue.writeBuffer(pipelineObj.posBuffer, 0, modelData.vertices)
-    device.queue.writeBuffer(pipelineObj.translationBuffer, 0, translation);
-    device.queue.writeBuffer(pipelineObj.mvpBuffer, 0, new Float32Array(mvpMatrix));
+    device.queue.writeBuffer(pipelineObj.translationBuffer, 0, translation)
+    device.queue.writeBuffer(pipelineObj.mvpBuffer, 0, new Float32Array(mvpMatrix))
 
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor)
     passEncoder.setPipeline(pipelineObj.pipeline)
-    passEncoder.setBindGroup(0, pipelineObj.bindGroup);
+    passEncoder.setBindGroup(0, pipelineObj.bindGroup)
     // 3 vertex form a triangle
-    passEncoder.draw(modelData.vertices.length / 2);
+    passEncoder.draw(modelData.vertices.length / 2)
 
+    passEncoder.setPipeline(pipelineObj.linePipeline)
+    let offset = 0;
     modelData.lines.forEach((line) => {
+        passEncoder.draw(line.length / 2, 1, offset)
+        offset += line.length * 2
     });
 
     passEncoder.end()
@@ -308,28 +262,28 @@ async function run() {
     await initModelData();
     const pipelineObj = await initPipeline(device, format)
 
-    const drawTriangle = () => {
+    const drawLayer = () => {
         draw(device, context, pipelineObj)
     }
 
     // start draw
-    drawTriangle()
+    drawLayer()
 
     // re-configure context on resize
     window.addEventListener('resize', () => {
         canvas.width = canvas.clientWidth * devicePixelRatio
         canvas.height = canvas.clientHeight * devicePixelRatio
         // don't need to recall context.configure() after v104
-        drawTriangle()
+        drawLayer()
     })
 
     document.querySelector('#tx')?.addEventListener('input', (e: Event) => {
         translation[0] = +(e.target as HTMLInputElement).value
-        drawTriangle()
+        drawLayer()
     })
     document.querySelector('#ty')?.addEventListener('input', (e: Event) => {
         translation[1] = +(e.target as HTMLInputElement).value
-        drawTriangle()
+        drawLayer()
     })
 }
 run()
