@@ -30,29 +30,30 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
     let nextCenter = vec2f(centerX, centerY) + v;
 
-    // // Find the nearest circle
-    // let p = vec2f(center[index * 2], center[index * 2 + 1]);
-    // var minDist = 1e20;
-    // var minIdx: u32 = 0u;
-    // for (var j: u32 = 0u; j < arrayLength(&center) / 2; j = j + 1u) {
-    //     if (j == index) {
-    //         continue;
-    //     }
-    //     let q = vec2f(center[j * 2], center[j * 2 + 1]);
-    //     let d = distance(p, q) - r - radius[j];
-    //     if (d < minDist) {
-    //         minDist = d;
-    //         minIdx = j;
-    //     }
-    // }
+    // Find the nearest circle
+    let p = vec2f(center[index * 2], center[index * 2 + 1]);
+    var minDist = 1e20;
+    var minIdx: u32 = 0u;
+    for (var j: u32 = 0u; j < arrayLength(&center) / 2; j = j + 1u) {
+        if (j == index) {
+            continue;
+        }
+        let q = vec2f(center[j * 2], center[j * 2 + 1]);
+        let d = distance(p, q) - r - radius[j];
+        if (d < minDist) {
+            minDist = d;
+            minIdx = j;
+        }
+    }
 
-    // if (minDist <= 10 && minDist > 0) {
-    //     let nearestCenter = vec2f(center[minIdx * 2], center[minIdx * 2 + 1]);
-    //     let normal = normalize(nextCenter - nearestCenter);
-    //     let newVelocity = v - 2 * dot(v, normal) * normal;
-    //     velocityX = newVelocity[0];
-    //     velocityY = newVelocity[1];
-    // }
+    let nearestCenter = vec2f(center[minIdx * 2], center[minIdx * 2 + 1]);
+    let normal = normalize(nextCenter - nearestCenter);
+    let vDotNormal = dot(v, normal);
+    if (minDist <= 0 && vDotNormal < 0) {
+        let newVelocity = v - 2 * vDotNormal * normal;
+        velocityX = newVelocity[0];
+        velocityY = newVelocity[1];
+    }
 
     let collision = checkCollision(boxBound, nextCenter, radius[index]);
 
